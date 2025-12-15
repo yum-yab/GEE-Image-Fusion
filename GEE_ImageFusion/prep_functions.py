@@ -64,34 +64,33 @@ def registerImages(landsat_t01, modis_t01, modis_tp):
 
     """
     # resample
-    landsat_t01 = landsat_t01.map(lambda image:
-                                  ee.Image(image).resample('bicubic'))
+    landsat_t01 = landsat_t01.map(lambda image: ee.Image(image).resample("bicubic"))
 
-    modis_t01 = modis_t01.map(lambda image:
-                              ee.Image(image).resample('bicubic'))
+    modis_t01 = modis_t01.map(lambda image: ee.Image(image).resample("bicubic"))
 
-    modis_tp = modis_tp.map(lambda image:
-                            ee.Image(image).resample('bicubic'))
+    modis_tp = modis_tp.map(lambda image: ee.Image(image).resample("bicubic"))
 
     # register MODIS to landsat t0
-    modis_t01 = modis_t01.map(lambda image:
-                              ee.Image(image)\
-                              .register(referenceImage=
-                                        ee.Image(landsat_t01.get(0)),
-                              maxOffset=ee.Number(150.0),
-                              stiffness=ee.Number(7.0)))
+    modis_t01 = modis_t01.map(
+        lambda image: ee.Image(image).register(
+            referenceImage=ee.Image(landsat_t01.get(0)),
+            maxOffset=ee.Number(150.0),
+            stiffness=ee.Number(7.0),
+        )
+    )
 
-    modis_tp = modis_tp.map(lambda image:
-                            ee.Image(image)\
-                            .register(referenceImage=
-                                      ee.Image(landsat_t01.get(0)),
-                            maxOffset=ee.Number(150.0),
-                            stiffness=ee.Number(7.0)))
+    modis_tp = modis_tp.map(
+        lambda image: ee.Image(image).register(
+            referenceImage=ee.Image(landsat_t01.get(0)),
+            maxOffset=ee.Number(150.0),
+            stiffness=ee.Number(7.0),
+        )
+    )
 
     return landsat_t01, modis_t01, modis_tp
 
 
-def threshold(landsat, coverClasses):
+def threshold(landsat, coverClasses, geometry):
     """
     Determine similarity threshold for each landsat image based on the number\
     of cover classes.
@@ -110,6 +109,8 @@ def threshold(landsat, coverClasses):
 
 
     """
+    
+
     def getThresh(image):
         """
         Local function to determine thresholds for each band of the landsat\
@@ -128,19 +129,15 @@ def threshold(landsat, coverClasses):
 
         """
         # calculate the standard deviation for each band within image
-        stddev = ee.Image(image).reduceRegion(reducer=ee.Reducer.stdDev(),
-                                              bestEffort=True,
-                                              maxPixels=ee.Number(1e6))
+        stddev = ee.Image(image).reduce(reducer=ee.Reducer.stdDev())
         # convert stddev dictionary to multiband image
-        stddev = stddev.toImage()
+        # stddev = stddev.toImage()
 
         # get our band names from the image and rename for threshold
-        names = stddev.bandNames() \
-            .map(lambda bn: ee.String(bn).cat('_thresh'))
+        names = stddev.bandNames().map(lambda bn: ee.String(bn).cat("_thresh"))
 
         # calculate the threshold from stddev and number of landcover classes
-        thresh = stddev.multiply(ee.Image.constant(ee.Number(2)) \
-                                 .divide(coverClasses))
+        thresh = stddev.multiply(ee.Image.constant(ee.Number(2)).divide(coverClasses))
         thresh = thresh.rename(names)
 
         return thresh
@@ -170,26 +167,26 @@ def threshMask(neighLandsat_t01, thresh, commonBandNames):
         Landsat neighborhood images with dissimilar pixels masked.
 
     """
-    masks = ee.List([0, 1]) \
-        .map(lambda i:
-             commonBandNames \
-             .map(lambda name:
-                  # get t0 or t1 neighborhood image and calc distance from
-                  # central pixel, if over threshold, mask the pixel
-                  ee.Image(neighLandsat_t01.get(i)) \
-                      .select([ee.String(name).cat('_(.+)')]) \
-                      .select([ee.String(name).cat('_0_0')]) \
-                  .subtract(ee.Image(neighLandsat_t01.get(i)) \
-                                .select([ee.String(name).cat('_(.+)')])) \
-                  .abs() \
-                  .lte(ee.Image(thresh.get(i)) \
-                       .select([ee.String(name).cat('_(.+)')]))))
+    masks = ee.List([0, 1]).map(
+        lambda i: commonBandNames.map(
+            lambda name:
+            # get t0 or t1 neighborhood image and calc distance from
+            # central pixel, if over threshold, mask the pixel
+            ee.Image(neighLandsat_t01.get(i))
+            .select([ee.String(name).cat("_(.+)")])
+            .select([ee.String(name).cat("_0_0")])
+            .subtract(
+                ee.Image(neighLandsat_t01.get(i)).select([ee.String(name).cat("_(.+)")])
+            )
+            .abs()
+            .lte(ee.Image(thresh.get(i)).select([ee.String(name).cat("_(.+)")]))
+        )
+    )
 
     return masks
 
 
-def prepMODIS(modis_t01, modis_tp, kernel,
-              numPixels, commonBandNames, pixelBandNames):
+def prepMODIS(modis_t01, modis_tp, kernel, numPixels, commonBandNames, pixelBandNames):
     """
     Convert MODIS images to neighborhood images and reorganize so that they\
     are in a format that will work with the 'core functions'
@@ -219,56 +216,62 @@ def prepMODIS(modis_t01, modis_tp, kernel,
 
     """
     # convert images to neighborhood images
-    neighMod_t01 = modis_t01 \
-        .map(lambda image: ee.Image(image).neighborhoodToBands(kernel))
-    neighMod_tp = modis_tp \
-        .map(lambda image: ee.Image(image).neighborhoodToBands(kernel))
+    neighMod_t01 = modis_t01.map(
+        lambda image: ee.Image(image).neighborhoodToBands(kernel)
+    )
+    neighMod_tp = modis_tp.map(
+        lambda image: ee.Image(image).neighborhoodToBands(kernel)
+    )
 
     # convert into an array image
-    modArr = ee.Image(neighMod_t01.get(0)).toArray() \
+    modArr = (
+        ee.Image(neighMod_t01.get(0))
+        .toArray()
         .arrayCat(ee.Image(neighMod_t01.get(1)).toArray(), 0)
+    )
 
     # create list of arrays sliced by pixel position
-    modPixArrays_t01 = ee.List.sequence(0, numPixels.subtract(1)) \
-        .map(lambda i:
-             modArr.arraySlice(0,
-                               ee.Number(i).int(),
-                               numPixels.multiply(commonBandNames.length()\
-                                                  .multiply(2)).int(),
-                               numPixels))
+    modPixArrays_t01 = ee.List.sequence(0, numPixels.subtract(1)).map(
+        lambda i: modArr.arraySlice(
+            0,
+            ee.Number(i).int(),
+            numPixels.multiply(commonBandNames.length().multiply(2)).int(),
+            numPixels,
+        )
+    )
 
-    modPixArrays_tp = neighMod_tp \
-        .map(lambda image:
-             ee.List.sequence(0, numPixels.subtract(1)) \
-                 .map(lambda i:
-                      ee.Image(image) \
-                      .toArray() \
-                      .arraySlice(0,
-                                  ee.Number(i).int(),
-                                  numPixels.multiply(commonBandNames\
-                                                     .length()).int(),
-                                  numPixels)))
+    modPixArrays_tp = neighMod_tp.map(
+        lambda image: ee.List.sequence(0, numPixels.subtract(1)).map(
+            lambda i: ee.Image(image)
+            .toArray()
+            .arraySlice(
+                0,
+                ee.Number(i).int(),
+                numPixels.multiply(commonBandNames.length()).int(),
+                numPixels,
+            )
+        )
+    )
 
     # flatten arrays and name based on doy, band, and pixel position
-    modSorted_t01 = ee.List.sequence(0, numPixels.subtract(1)) \
-        .map(lambda i:
-             ee.Image(modPixArrays_t01.get(i)) \
-             .arrayFlatten([pixelBandNames.get(i)]))
+    modSorted_t01 = ee.List.sequence(0, numPixels.subtract(1)).map(
+        lambda i: ee.Image(modPixArrays_t01.get(i)).arrayFlatten(
+            [pixelBandNames.get(i)]
+        )
+    )
 
-    modSorted_tp = ee.List.sequence(0, modPixArrays_tp.length().subtract(1)) \
-        .map(lambda i:
-             ee.List.sequence(0, numPixels.subtract(1)) \
-             .map(lambda x:
-                  ee.Image(ee.List(modPixArrays_tp.get(i)).get(x)) \
-                  .arrayFlatten([commonBandNames]) \
-                  .set('DOY', ee.Image(modis_tp.get(i)).get('DOY'))))
+    modSorted_tp = ee.List.sequence(0, modPixArrays_tp.length().subtract(1)).map(
+        lambda i: ee.List.sequence(0, numPixels.subtract(1)).map(
+            lambda x: ee.Image(ee.List(modPixArrays_tp.get(i)).get(x))
+            .arrayFlatten([commonBandNames])
+            .set("DOY", ee.Image(modis_tp.get(i)).get("DOY"))
+        )
+    )
 
     return modSorted_t01, modSorted_tp
 
 
-def prepLandsat(landsat_t01, kernel,
-                numPixels, commonBandNames,
-                doys, coverClasses):
+def prepLandsat(landsat_t01, kernel, numPixels, commonBandNames, doys, coverClasses, geometry):
     """
     Convert Landsat images to neighborhood images, mask dissimilar pixels,\
     and reorganize so that they are in a format that will work with the\
@@ -301,74 +304,83 @@ def prepLandsat(landsat_t01, kernel,
 
     """
     # convert images to neighborhood images
-    neighLandsat_t01 = landsat_t01 \
-        .map(lambda image: ee.Image(image).neighborhoodToBands(kernel))
+    neighLandsat_t01= landsat_t01.map(
+        lambda image: ee.Image(image).neighborhoodToBands(kernel)
+    )
 
     # create list of pixel postions
-    pixPositions = ee.Image(neighLandsat_t01.get(0)).bandNames() \
-        .map(lambda bn: ee.String(bn).replace('[a-z]+_', '_')) \
+    pixPositions = (
+        ee.Image(neighLandsat_t01.get(0))
+        .bandNames()
+        .map(lambda bn: ee.String(bn).replace("[a-z]+_", "_"))
         .slice(0, numPixels)
+    )
 
     # create list of band names to rename output arrays
-    pixelBandNames = pixPositions \
-        .map(lambda position:
-             doys.map(lambda doy:
-                      commonBandNames.map(lambda bn:
-                                          ee.String(doy).cat('_') \
-                                          .cat(ee.String(bn)) \
-                                          .cat(ee.String(position))))) \
-        .map(lambda l: ee.List(l).flatten())
+    pixelBandNames = pixPositions.map(
+        lambda position: doys.map(
+            lambda doy: commonBandNames.map(
+                lambda bn: ee.String(doy)
+                .cat("_")
+                .cat(ee.String(bn))
+                .cat(ee.String(position))
+            )
+        )
+    ).map(lambda l: ee.List(l).flatten())
 
     # convert to array and sort
     # essentially we would have the array values stacked with
     # time 0 on top of time 1
     # ie 1 column of values for pix positions at both times
-    lanArr_t01 = ee.Image(neighLandsat_t01.get(0)).toArray() \
+    lanArr_t01 = (
+        ee.Image(neighLandsat_t01.get(0))
+        .toArray()
         .arrayCat(ee.Image(neighLandsat_t01.get(1)).toArray(), 0)
+    )
 
     pixArrays = ee.List([])
-    pixArrays = ee.List.sequence(0, numPixels.subtract(1)) \
-        .map(lambda i: lanArr_t01 \
-             .arraySlice(0,
-                         ee.Number(i).int(),
-                         numPixels.multiply(commonBandNames \
-                                            .length() \
-                                            .multiply(2)).int(),
-                         numPixels))
+    pixArrays = ee.List.sequence(0, numPixels.subtract(1)).map(
+        lambda i: lanArr_t01.arraySlice(
+            0,
+            ee.Number(i).int(),
+            numPixels.multiply(commonBandNames.length().multiply(2)).int(),
+            numPixels,
+        )
+    )
 
     # flatten arrays and name based on doy, band, and pixel position
-    lanSorted = ee.List.sequence(0, numPixels.subtract(1))\
-        .map(lambda i:
-             ee.Image(pixArrays.get(i)).arrayFlatten([pixelBandNames.get(i)]))
+    lanSorted = ee.List.sequence(0, numPixels.subtract(1)).map(
+        lambda i: ee.Image(pixArrays.get(i)).arrayFlatten([pixelBandNames.get(i)])
+    )
 
     # determine threshold for images
-    thresh = threshold(landsat_t01, coverClasses)
+    thresh = threshold(landsat_t01, coverClasses, geometry)
 
     # mask window images with thresholds
     mask_t01 = threshMask(neighLandsat_t01, thresh, commonBandNames)
 
     # convert list of masks of lists of masks to image and then to array
-    maskArr_t01 = ee.ImageCollection(mask_t01.flatten()) \
-        .toBands() \
-        .toArray()
+    maskArr_t01 = ee.ImageCollection(mask_t01.flatten()).toBands().toArray()
 
-    maskArrays = ee.List.sequence(0, numPixels.subtract(1))\
-        .map(lambda i:
-             maskArr_t01 \
-             .arraySlice(0, ee.Number(i).int(),
-                         numPixels.multiply(commonBandNames.length()\
-                                            .multiply(2)).int(),
-                         numPixels))
+    maskArrays = ee.List.sequence(0, numPixels.subtract(1)).map(
+        lambda i: maskArr_t01.arraySlice(
+            0,
+            ee.Number(i).int(),
+            numPixels.multiply(commonBandNames.length().multiply(2)).int(),
+            numPixels,
+        )
+    )
 
     # flatten mask arrays and name based on doy, band, and pixel position
-    masksSorted = ee.List.sequence(0, numPixels.subtract(1))\
-        .map(lambda i:
-             ee.Image(maskArrays.get(i)).arrayFlatten([pixelBandNames.get(i)]))
+    masksSorted = ee.List.sequence(0, numPixels.subtract(1)).map(
+        lambda i: ee.Image(maskArrays.get(i)).arrayFlatten([pixelBandNames.get(i)])
+    )
 
     # mask landsat images
-    maskedLandsat = ee.List.sequence(0, numPixels.subtract(1))\
-        .map(lambda index:
-             ee.Image(lanSorted.get(index)) \
-             .updateMask(ee.Image(masksSorted.get(index))))
+    maskedLandsat = ee.List.sequence(0, numPixels.subtract(1)).map(
+        lambda index: ee.Image(lanSorted.get(index)).updateMask(
+            ee.Image(masksSorted.get(index))
+        )
+    )
 
     return maskedLandsat, pixPositions, pixelBandNames

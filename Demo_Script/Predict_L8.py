@@ -67,8 +67,8 @@ ee.Initialize()
 region = ee.Geometry.Point([-118.12627784505537, 44.66875751833964])
 
 # define training data temporal bounds broadly
-startDate = '2017-03-01'
-endDate = '2018-01-01'
+startDate = "2017-03-01"
+endDate = "2018-01-01"
 
 # common bands between sensors that will be used for fusion
 #   would need to add functions for other indices (evi etc.).
@@ -77,22 +77,23 @@ endDate = '2018-01-01'
 #   some resturcturing of this code would be necessary if the goal was to
 #   predict a multiband image but the core functions should work for any number
 #   of bands
-commonBandNames = ee.List(['ndvi'])
+commonBandNames = ee.List(["ndvi"])
 
 # image collections to use in fusion
 # NOTE: if using older Landsat and not using NDVI one would have to modify the
 # get_paired_collections script because this script harmonizes NDVI from
 # L5 & L7 to L8 based on Roy et al. 2016 (see etmToOli and getPaired functions)
-landsatCollection = 'LANDSAT/LC08/C01/T1_SR'
-modisCollection = 'MODIS/006/MCD43A4'
+landsatCollection = "LANDSAT/LC08/C01/T1_SR"
+modisCollection = "MODIS/006/MCD43A4"
 
 # landsat band names including qc band for masking
-bandNamesLandsat = ee.List(['blue', 'green', 'red',
-                            'nir', 'swir1', 'swir2', 'pixel_qa'])
+bandNamesLandsat = ee.List(
+    ["blue", "green", "red", "nir", "swir1", "swir2", "pixel_qa"]
+)
 landsatBands = ee.List([1, 2, 3, 4, 5, 6, 10])
 
 # modis band names
-bandNamesModis = ee.List(['blue', 'green', 'red', 'nir', 'swir1', 'swir2'])
+bandNamesModis = ee.List(["blue", "green", "red", "nir", "swir1", "swir2"])
 modisBands = ee.List([2, 3, 0, 1, 5, 6])
 
 # radius of moving window
@@ -108,18 +109,26 @@ numPixels = kernelRadius.add(kernelRadius.add(1)).pow(2)
 coverClasses = 7
 
 # to export the images to an asset we need the path to the assets folder
-path = 'users/nietupst/'
-scene_name = 'NDVI_P43R29_'
+path = "users/nietupst/"
+scene_name = "NDVI_P43R29_"
 
 ##############################################################################
 # %% get filtered collections
 ##############################################################################
 
 # sorted, filtered, paired image retrieval
-paired = getPaired(startDate, endDate,
-                   landsatCollection, landsatBands, bandNamesLandsat,
-                   modisCollection, modisBands, bandNamesModis,
-                   commonBandNames, region)
+paired = getPaired(
+    startDate,
+    endDate,
+    landsatCollection,
+    landsatBands,
+    bandNamesLandsat,
+    modisCollection,
+    modisBands,
+    bandNamesModis,
+    commonBandNames,
+    region,
+)
 
 subs = makeSubcollections(paired)
 # subs_meta = subs.getInfo()
@@ -149,9 +158,7 @@ for i in range(0, num_lists):
         start = ee.Number(index_seq.get(x))
 
         # ending index
-        end = ee.Algorithms.If(start.add(10).gt(num_imgs),
-                               num_imgs,
-                               start.add(10))
+        end = ee.Algorithms.If(start.add(10).gt(num_imgs), num_imgs, start.add(10))
 
         # group of images to predict
         pred_group = subList.slice(start, end)
@@ -161,43 +168,40 @@ for i in range(0, num_lists):
 
         # get the start and end day values and year for the group to use
         # to label the file when exported to asset
-        startDay = ee.Number.parse(ee.ImageCollection(pred_group)
-                                   .first()
-                                   .get('DOY'))
-        endDay = ee.Number.parse(ee.ImageCollection(pred_group)
-                                 .sort('system:time_start', False)
-                                 .first()
-                                 .get('DOY'))
-        year = ee.Date(ee.ImageCollection(pred_group)
-                       .sort('system:time_start', False)
-                       .first()
-                       .get('system:time_start')).format('Y')
+        startDay = ee.Number.parse(ee.ImageCollection(pred_group).first().get("DOY"))
+        endDay = ee.Number.parse(
+            ee.ImageCollection(pred_group)
+            .sort("system:time_start", False)
+            .first()
+            .get("DOY")
+        )
+        year = ee.Date(
+            ee.ImageCollection(pred_group)
+            .sort("system:time_start", False)
+            .first()
+            .get("system:time_start")
+        ).format("Y")
 
         # start and end day of year
-        doys = landsat_t01 \
-            .map(lambda img: ee.String(ee.Image(img).get('DOY')).cat('_'))
+        doys = landsat_t01.map(lambda img: ee.String(ee.Image(img).get("DOY")).cat("_"))
 
         # register images
-        landsat_t01, modis_t01, modis_tp = registerImages(landsat_t01,
-                                                          modis_t01,
-                                                          modis_tp)
+        landsat_t01, modis_t01, modis_tp = registerImages(
+            landsat_t01, modis_t01, modis_tp
+        )
 
         # prep landsat imagery (mask and format)
-        maskedLandsat, pixPositions, pixBN = prepLandsat(landsat_t01,
-                                                         kernel,
-                                                         numPixels,
-                                                         commonBandNames,
-                                                         doys,
-                                                         coverClasses)
+        maskedLandsat, pixPositions, pixBN = prepLandsat(
+            landsat_t01, kernel, numPixels, commonBandNames, doys, coverClasses
+        )
 
         # prep modis imagery (mask and format)
-        modSorted_t01, modSorted_tp = prepMODIS(modis_t01, modis_tp, kernel,
-                                                numPixels, commonBandNames,
-                                                pixBN)
+        modSorted_t01, modSorted_tp = prepMODIS(
+            modis_t01, modis_tp, kernel, numPixels, commonBandNames, pixBN
+        )
 
         # calculate spectral distance
-        specDist = calcSpecDist(maskedLandsat, modSorted_t01,
-                                numPixels, pixPositions)
+        specDist = calcSpecDist(maskedLandsat, modSorted_t01, numPixels, pixPositions)
 
         # calculate spatial distance
         spatDist = calcSpatDist(pixPositions)
@@ -206,47 +210,62 @@ for i in range(0, num_lists):
         weights = calcWeight(spatDist, specDist)
 
         # calculate the conversion coefficients
-        coeffs = calcConversionCoeff(maskedLandsat, modSorted_t01,
-                                     doys, numPixels, commonBandNames)
+        coeffs = calcConversionCoeff(
+            maskedLandsat, modSorted_t01, doys, numPixels, commonBandNames
+        )
 
         # predict all modis images in modis tp collection
-        prediction = modSorted_tp \
-            .map(lambda image:
-                 predictLandsat(landsat_t01, modSorted_t01,
-                                doys, ee.List(image),
-                                weights, coeffs,
-                                commonBandNames, numPixels))
+        prediction = modSorted_tp.map(
+            lambda image: predictLandsat(
+                landsat_t01,
+                modSorted_t01,
+                doys,
+                ee.List(image),
+                weights,
+                coeffs,
+                commonBandNames,
+                numPixels,
+            )
+        )
 
         # create a list of new band names to apply to the multiband ndvi image
         # NOTE: cant export with names starting with 0
         preds = ee.ImageCollection(prediction).toBands()
-        dates = modis_tp.map(lambda img:
-                             ee.Image(img).get('system:time_start'))
-        predNames = ee.List.sequence(0, prediction.length().subtract(1)) \
-            .map(lambda i:
-                 commonBandNames\
-                     .map(lambda name:
-                          ee.String(name)
-                          .cat(ee.String(ee.Number(dates.get(i)).format()))))\
+        dates = modis_tp.map(lambda img: ee.Image(img).get("system:time_start"))
+        predNames = (
+            ee.List.sequence(0, prediction.length().subtract(1))
+            .map(
+                lambda i: commonBandNames.map(
+                    lambda name: ee.String(name).cat(
+                        ee.String(ee.Number(dates.get(i)).format())
+                    )
+                )
+            )
             .flatten()
+        )
 
         # export all predictions as a single multiband image
         # each band name corresponds to the timestamp for the image
         task = ee.batch.Export.image.toAsset(
             image=preds.rename(predNames).multiply(10000).toInt16(),
             description=ee.String(scene_name)
-                        .cat(year)
-                        .cat('_')
-                        .cat(startDay.format())
-                        .cat('_').cat(endDay.format()).getInfo(),
+            .cat(year)
+            .cat("_")
+            .cat(startDay.format())
+            .cat("_")
+            .cat(endDay.format())
+            .getInfo(),
             assetId=ee.String(path)
-                    .cat(ee.String(scene_name))
-                    .cat(year)
-                    .cat('_')
-                    .cat(startDay.format())
-                    .cat('_')
-                    .cat(endDay.format()).getInfo(),
+            .cat(ee.String(scene_name))
+            .cat(year)
+            .cat("_")
+            .cat(startDay.format())
+            .cat("_")
+            .cat(endDay.format())
+            .getInfo(),
             region=ee.Image(prediction.get(0)).geometry(),
-            scale=30)
+            scale=30,
+        )
 
         task.start()
+

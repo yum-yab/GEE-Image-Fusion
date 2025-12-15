@@ -70,41 +70,50 @@ def maskLandsat(image):
     snowBitMask = 1 << 4
 
     # Get the pixel QA band.
-    qa = image.select('pixel_qa')
+    qa = image.select("pixel_qa")
 
     # make mask
-    mask = qa.bitwiseAnd(cloudShadowBitMask).eq(0) \
-        .And(qa.bitwiseAnd(cloudsBitMask).eq(0)) \
+    mask = (
+        qa.bitwiseAnd(cloudShadowBitMask)
+        .eq(0)
+        .And(qa.bitwiseAnd(cloudsBitMask).eq(0))
         .And(qa.bitwiseAnd(snowBitMask).eq(0))
+    )
 
     # mask the mask with the mask...
     maskedMask = mask.updateMask(mask)
 
     # count the number of nonMasked pixels
-    maskedCount = maskedMask.select(['pixel_qa']) \
-        .reduceRegion(reducer=ee.Reducer.count(),
-                      geometry=image.geometry(),
-                      scale=ee.Number(30),
-                      maxPixels=ee.Number(4e10))
+    maskedCount = maskedMask.select(["pixel_qa"]).reduceRegion(
+        reducer=ee.Reducer.count(),
+        geometry=image.geometry(),
+        scale=ee.Number(30),
+        maxPixels=ee.Number(4e10),
+    )
 
     # count the total number of pixels
-    origCount = image.select(['blue']) \
-        .reduceRegion(reducer=ee.Reducer.count(),
-                      geometry=image.geometry(),
-                      scale=ee.Number(30),
-                      maxPixels=ee.Number(4e10))
+    origCount = image.select(["blue"]).reduceRegion(
+        reducer=ee.Reducer.count(),
+        geometry=image.geometry(),
+        scale=ee.Number(30),
+        maxPixels=ee.Number(4e10),
+    )
 
     # calculate the percent of masked pixels
-    percent = ee.Number(origCount.get('blue')) \
-        .subtract(maskedCount.get('pixel_qa')) \
-        .divide(origCount.get('blue')) \
-        .multiply(100) \
+    percent = (
+        ee.Number(origCount.get("blue"))
+        .subtract(maskedCount.get("pixel_qa"))
+        .divide(origCount.get("blue"))
+        .multiply(100)
         .round()
+    )
 
     # Return the masked image with new property and time stamp
-    return image.updateMask(mask) \
-        .set('CloudSnowMaskedPercent', percent) \
+    return (
+        image.updateMask(mask)
+        .set("CloudSnowMaskedPercent", percent)
         .copyProperties(image, ["system:time_start"])
+    )
 
 
 def maskMODIS(image):
@@ -124,18 +133,20 @@ def maskMODIS(image):
     """
     # calculate snow water index for the image
     swi = image.expression(
-        '(green * (nir - swir1)) / ((green + nir) * (nir + swir1))',
-        {'green': image.select(['green']),
-         'nir': image.select(['nir']),
-         'swir1': image.select(['swir1'])
-         }).rename('swi')
+        "(green * (nir - swir1)) / ((green + nir) * (nir + swir1))",
+        {
+            "green": image.select(["green"]),
+            "nir": image.select(["nir"]),
+            "swir1": image.select(["swir1"]),
+        },
+    ).rename("swi")
 
     # mask out values of swi above 0.1
     mask = swi.lt(0.1)
 
-    return image \
-        .updateMask(mask) \
-        .copyProperties(image, ['system:time_start', 'system:id'])
+    return image.updateMask(mask).copyProperties(
+        image, ["system:time_start", "system:id"]
+    )
 
 
 def addNDVI(image):
@@ -153,7 +164,7 @@ def addNDVI(image):
         Image with additional NDVI band.
     """
     # calculate NDVI
-    ndvi = image.normalizedDifference(['nir', 'red']).select(['nd'], ['ndvi'])
+    ndvi = image.normalizedDifference(["nir", "red"]).select(["nd"], ["ndvi"])
 
     return image.addBands(ndvi)
 
@@ -174,14 +185,17 @@ def etmToOli(img):
 
     """
     # coefficients from Roy et al. 2016
-    coefficients = {'beta_0': ee.Image.constant([0.0235]),
-                    'beta_1': ee.Image.constant([0.9723])}
+    coefficients = {
+        "beta_0": ee.Image.constant([0.0235]),
+        "beta_1": ee.Image.constant([0.9723]),
+    }
 
-    return img \
-        .multiply(coefficients['beta_1']) \
-        .add(coefficients['beta_0']) \
-        .toFloat() \
-        .copyProperties(img, ["system:time_start", 'system:id', 'DOY'])
+    return (
+        img.multiply(coefficients["beta_1"])
+        .add(coefficients["beta_0"])
+        .toFloat()
+        .copyProperties(img, ["system:time_start", "system:id", "DOY"])
+    )
 
 
 ##############################################################################
@@ -189,11 +203,19 @@ def etmToOli(img):
 ##############################################################################
 
 
-def getPaired(startDate, endDate,
-              landsatCollection, landsatBands, bandNamesLandsat,
-              modisCollection, modisBands, bandNamesModis,
-              commonBandNames,
-              region):
+def getPaired(
+    startDate: str,
+    endDate: str,
+    landsatCollection: str,
+    landsatBands: ee.List,
+    bandNamesLandsat: ee.List,
+    modisCollection: str,
+    modisBands: str,
+    bandNamesModis: ee.List,
+    commonBandNames: ee.List,
+    region: ee.Geometry,
+    skip_masking: bool = False
+):
     """
     Create a list of image collections. Landsat and MODIS with low cloud cover\
     from the same date and the MODIS images between these pairs.
@@ -230,56 +252,90 @@ def getPaired(startDate, endDate,
         dates.
 
     """
-    if landsatCollection == 'LANDSAT/LC08/C01/T1_SR':
+    if landsatCollection == "LANDSAT/LC08/C01/T1_SR":
         # get landsat images
-        landsat = ee.ImageCollection(landsatCollection) \
-                    .filterDate(startDate, endDate) \
-                    .filterBounds(region) \
-                    .filterMetadata('CLOUD_COVER', 'less_than', 5) \
-                    .select(landsatBands, bandNamesLandsat) \
-                    .map(addNDVI) \
-                    .map(maskLandsat) \
-                    .filterMetadata('CloudSnowMaskedPercent', 'less_than', 50)\
-                    .map(lambda image: image \
-                         .setMulti({
-                             'system:time_start':
-                                 ee.Date(image.date().format('y-M-d')) \
-                                 .millis(),
-                             'DOY': image.date().format('D')
-                             })) \
-                    .select(commonBandNames)
+        landsat = (
+            ee.ImageCollection(landsatCollection)
+            .filterDate(startDate, endDate)
+            .filterBounds(region)
+            .filterMetadata("CLOUD_COVER", "less_than", 5)
+            .select(landsatBands, bandNamesLandsat)
+            .map(addNDVI)
+            .map(maskLandsat)
+            .filterMetadata("CloudSnowMaskedPercent", "less_than", 50)
+            .map(
+                lambda image: image.setMulti(
+                    {
+                        "system:time_start": ee.Date(
+                            image.date().format("y-M-d")
+                        ).millis(),
+                        "DOY": image.date().format("D"),
+                    }
+                )
+            )
+            .select(commonBandNames)
+        )
+    elif landsatCollection.startswith("LANDSAT/COMPOSITES") or skip_masking:
+        # if its a composite collection were gonna skip the masking
+
+        landsat = (
+            ee.ImageCollection(landsatCollection)
+            .filterDate(startDate, endDate)
+            .filterBounds(region)
+            .select(landsatBands, bandNamesLandsat)
+            .map(
+                lambda image: image.setMulti(
+                    {
+                        "system:time_start": ee.Date(
+                            image.date().format("y-M-d")
+                        ).millis(),
+                        "DOY": image.date().format("D"),
+                    }
+                )
+            )
+            .select(commonBandNames)
+        )
+
     else:
         # get landsat images
-        landsat = ee.ImageCollection(landsatCollection) \
-                    .filterDate(startDate, endDate) \
-                    .filterBounds(region) \
-                    .filterMetadata('CLOUD_COVER', 'less_than', 5) \
-                    .select(landsatBands, bandNamesLandsat) \
-                    .map(addNDVI) \
-                    .map(maskLandsat) \
-                    .filterMetadata('CloudSnowMaskedPercent', 'less_than', 50)\
-                    .map(lambda image: image \
-                         .setMulti({
-                             'system:time_start':
-                                 ee.Date(image.date().format('y-M-d')) \
-                                 .millis(),
-                             'DOY': image.date().format('D')
-                             })) \
-                    .select(commonBandNames) \
-                    .map(etmToOli)
+        landsat = (
+            ee.ImageCollection(landsatCollection)
+            .filterDate(startDate, endDate)
+            .filterBounds(region)
+            .filterMetadata("CLOUD_COVER", "less_than", 5)
+            .select(landsatBands, bandNamesLandsat)
+            .map(addNDVI)
+            .map(maskLandsat)
+            .filterMetadata("CloudSnowMaskedPercent", "less_than", 50)
+            .map(
+                lambda image: image.setMulti(
+                    {
+                        "system:time_start": ee.Date(
+                            image.date().format("y-M-d")
+                        ).millis(),
+                        "DOY": image.date().format("D"),
+                    }
+                )
+            )
+            .select(commonBandNames)
+            .map(etmToOli)
+        )
 
     # get modis images
-    modis = ee.ImageCollection(modisCollection) \
-              .filterDate(startDate, endDate) \
-              .select(modisBands, bandNamesModis) \
-              .map(addNDVI) \
-              .map(maskMODIS) \
-              .map(lambda image: image.set('DOY', image.date().format('D'))) \
-              .select(commonBandNames)
+    modis = (
+        ee.ImageCollection(modisCollection)
+        .filterDate(startDate, endDate)
+        .select(modisBands, bandNamesModis)
+        # .map(addNDVI)
+        .map(maskMODIS)
+        .map(lambda image: image.set("DOY", image.date().format("D")))
+        .select(commonBandNames)
+    )
 
     # filter the two collections by the date property
-    dayfilter = ee.Filter.equals(leftField='system:time_start',
-                                 rightField='system:time_start')
+    dayfilter = ee.Filter.equals(
+        leftField="system:time_start", rightField="system:time_start"
+    )
 
     # define simple join
     pairedJoin = ee.Join.simple()
@@ -317,7 +373,7 @@ def getDates(image, empty_list):
 
     """
     # get date and update format
-    date = ee.Image(image).date().format('yyyy-MM-dd')
+    date = ee.Image(image).date().format("yyyy-MM-dd")
 
     # add date to 'empty list'
     updatelist = ee.List(empty_list).add(date)
@@ -347,6 +403,7 @@ def makeSubcollections(paired):
         List of lists of lists.
 
     """
+
     def getSub(ind):
         """
         Local function to create individual subcollection.
@@ -363,22 +420,28 @@ def makeSubcollections(paired):
 
         """
         # get landsat images
-        lan_01 = paired[0] \
-            .filterDate(ee.List(dateList).get(ind),
-                        ee.Date(ee.List(dateList).get(ee.Number(ind).add(1)))\
-                            .advance(1, 'day')) \
+        lan_01 = (
+            paired[0]
+            .filterDate(
+                ee.List(dateList).get(ind),
+                ee.Date(ee.List(dateList).get(ee.Number(ind).add(1))).advance(1, "day"),
+            )
             .toList(2)
+        )
         # get modis paired images
-        mod_01 = paired[1] \
-            .filterDate(ee.List(dateList).get(ind),
-                        ee.Date(ee.List(dateList).get(ee.Number(ind).add(1)))\
-                            .advance(1, 'day')) \
+        mod_01 = (
+            paired[1]
+            .filterDate(
+                ee.List(dateList).get(ind),
+                ee.Date(ee.List(dateList).get(ee.Number(ind).add(1))).advance(1, "day"),
+            )
             .toList(2)
+        )
         # get modis images between these two dates
-        mod_p = paired[2] \
-            .filterDate(ee.List(dateList).get(ind),
-                        ee.Date(ee.List(dateList).get(ee.Number(ind).add(1)))\
-                            .advance(1, 'day'))
+        mod_p = paired[2].filterDate(
+            ee.List(dateList).get(ind),
+            ee.Date(ee.List(dateList).get(ee.Number(ind).add(1))).advance(1, "day"),
+        )
 
         mod_p = mod_p.toList(mod_p.size())
 
@@ -394,7 +457,6 @@ def makeSubcollections(paired):
     dateList = paired[0].iterate(getDates, empty_list)
 
     # filter out sub collections from paired and unpaired collections
-    subcols = ee.List.sequence(0, ee.List(dateList).length().subtract(2))\
-        .map(getSub)
+    subcols = ee.List.sequence(0, ee.List(dateList).length().subtract(2)).map(getSub)
 
     return subcols
