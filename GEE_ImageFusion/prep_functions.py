@@ -40,7 +40,7 @@ SOFTWARE.
 import ee
 
 
-def registerImages(landsat_t01, modis_t01, modis_tp):
+def registerImages(landsat_t01, modis_t01, modis_tp, clip_modis=None):
     """
     Register each image to the earliest (t0) landsat image in the set of pairs.
 
@@ -64,11 +64,21 @@ def registerImages(landsat_t01, modis_t01, modis_tp):
 
     """
     # resample
+
+    if clip_modis is not None:
+
+        def preprocessing_func(image):
+            return ee.Image(image).clip(clip_modis).resample("bicubic")
+    else:
+
+        def preprocessing_func(image):
+            return ee.Image(image).resample("bicubic")
+
     landsat_t01 = landsat_t01.map(lambda image: ee.Image(image).resample("bicubic"))
 
-    modis_t01 = modis_t01.map(lambda image: ee.Image(image).resample("bicubic"))
+    modis_t01 = modis_t01.map(preprocessing_func)
 
-    modis_tp = modis_tp.map(lambda image: ee.Image(image).resample("bicubic"))
+    modis_tp = modis_tp.map(preprocessing_func)
 
     # register MODIS to landsat t0
     modis_t01 = modis_t01.map(
@@ -90,7 +100,7 @@ def registerImages(landsat_t01, modis_t01, modis_tp):
     return landsat_t01, modis_t01, modis_tp
 
 
-def threshold(landsat, coverClasses, geometry):
+def threshold(landsat, coverClasses):
     """
     Determine similarity threshold for each landsat image based on the number\
     of cover classes.
@@ -109,7 +119,6 @@ def threshold(landsat, coverClasses, geometry):
 
 
     """
-    
 
     def getThresh(image):
         """
@@ -129,9 +138,13 @@ def threshold(landsat, coverClasses, geometry):
 
         """
         # calculate the standard deviation for each band within image
-        stddev = ee.Image(image).reduce(reducer=ee.Reducer.stdDev())
+        stddev = ee.Image(image).reduceRegion(
+            reducer=ee.Reducer.stdDev(),
+            bestEffort=True,
+            maxPixels=ee.Number(1e6),
+        )
         # convert stddev dictionary to multiband image
-        # stddev = stddev.toImage()
+        stddev = stddev.toImage()
 
         # get our band names from the image and rename for threshold
         names = stddev.bandNames().map(lambda bn: ee.String(bn).cat("_thresh"))
@@ -271,7 +284,9 @@ def prepMODIS(modis_t01, modis_tp, kernel, numPixels, commonBandNames, pixelBand
     return modSorted_t01, modSorted_tp
 
 
-def prepLandsat(landsat_t01, kernel, numPixels, commonBandNames, doys, coverClasses, geometry):
+def prepLandsat(
+    landsat_t01, kernel, numPixels, commonBandNames, doys, coverClasses, geometry
+):
     """
     Convert Landsat images to neighborhood images, mask dissimilar pixels,\
     and reorganize so that they are in a format that will work with the\
@@ -304,7 +319,7 @@ def prepLandsat(landsat_t01, kernel, numPixels, commonBandNames, doys, coverClas
 
     """
     # convert images to neighborhood images
-    neighLandsat_t01= landsat_t01.map(
+    neighLandsat_t01 = landsat_t01.map(
         lambda image: ee.Image(image).neighborhoodToBands(kernel)
     )
 
@@ -354,9 +369,9 @@ def prepLandsat(landsat_t01, kernel, numPixels, commonBandNames, doys, coverClas
     )
 
     # determine threshold for images
-    thresh = threshold(landsat_t01, coverClasses, geometry)
+    thresh = threshold(landsat_t01, coverClasses)
 
-    # mask window images with thresholds
+    # # mask window images with thresholds
     mask_t01 = threshMask(neighLandsat_t01, thresh, commonBandNames)
 
     # convert list of masks of lists of masks to image and then to array

@@ -6,4 +6,10 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "earthengine-api>=1.7.4",
+    "geemap>=0.36.6",
+]
+
+[dependency-groups]
+dev = [
+    "seaborn>=0.13.2",
 ]

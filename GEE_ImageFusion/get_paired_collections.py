@@ -46,6 +46,45 @@ import ee
 ##############################################################################
 # MASKING, INDEX CALCULATION, L5 & L7 TO L8 HARMONIZATION
 ##############################################################################
+# from https://github.com/google/earthengine-catalog/blob/64a5942e296ee5f803972564fef6abaa14986898/pipelines/landsat.py#L64
+
+def prep_c2sr_l4l5l7(image: ee.Image) -> ee.Image:
+    """Scale and mask L5-L7 C2 SR."""
+    # Scale optical bands
+    optical_bands = image.select("SR_B.").multiply(0.0000275).add(-0.2)
+
+    # Select cloud-free land and water pixels.
+    qa = image.select("QA_PIXEL")
+    # Clear if bits 0-5 are zero.
+    mask1 = qa.bitwiseAnd(int("111111", 2)).eq(0)
+    # Good snow/shadow/cloud confidence if bits 8-13 are equal to 010101.
+    mask2 = qa.rightShift(8).bitwiseAnd(int("111111", 2)).eq(int("010101", 2))
+
+    # Remove pixels marked as saturated or out of range.
+    mask3 = image.select("QA_RADSAT").eq(0)
+    mask4 = optical_bands.reduce(ee.Reducer.min()).gt(0)
+    mask5 = optical_bands.reduce(ee.Reducer.max()).lt(1)
+    # Mark hazy pixels using an empirical AOD threshold.
+    mask6 = image.select("SR_ATMOS_OPACITY").unmask(-1).lt(300)
+
+    # Combine masks
+    final_mask = mask1.And(mask2).And(mask3).And(mask4).And(mask5).And(mask6)
+
+    # Add scaled bands, apply mask, and ensure float type
+    return (
+        image.addBands(optical_bands, None, True)
+        .updateMask(final_mask)
+        .toFloat()
+        .copyProperties(image, ["system:time_start"])
+    )
+
+
+def scaleMODIS(image: ee.Image) -> ee.Image:
+    """
+    Scales MODIS bands by scale factor and ensures float type.
+    """
+    scaled = image.multiply(0.0001)
+    return image.addBands(scaled, None, True).toFloat()
 
 
 def maskLandsat(image):
@@ -214,7 +253,10 @@ def getPaired(
     bandNamesModis: ee.List,
     commonBandNames: ee.List,
     region: ee.Geometry,
-    skip_masking: bool = False
+    WRS_PATH: int,
+    WRS_ROW: int,
+    cloud_cover_limit: int = 20,    
+    skip_masking: bool = False,
 ):
     """
     Create a list of image collections. Landsat and MODIS with low cloud cover\
@@ -242,6 +284,11 @@ def getPaired(
         List of bands to use in fusion. Common to both Landsat and MODIS.
     region: geometry.Geometry
         Location to use in filtering collections. Must not be in scene overlap.
+    WRS_PATH: int
+        Landsat Worldwide Reference System (WRS) path.
+    WRS_ROW: int
+        Landsat Worldwide Reference System (WRS) row.
+
 
     Returns
     -------
@@ -258,7 +305,10 @@ def getPaired(
             ee.ImageCollection(landsatCollection)
             .filterDate(startDate, endDate)
             .filterBounds(region)
-            .filterMetadata("CLOUD_COVER", "less_than", 5)
+            .filterMetadata("WRS_PATH", "equals", WRS_PATH)
+            .filterMetadata("WRS_ROW", "equals", WRS_ROW)
+            .filterMetadata("CLOUD_COVER", "less_than", cloud_cover_limit)
+            .map(lambda image: image.clip(region))
             .select(landsatBands, bandNamesLandsat)
             .map(addNDVI)
             .map(maskLandsat)
@@ -282,31 +332,10 @@ def getPaired(
             ee.ImageCollection(landsatCollection)
             .filterDate(startDate, endDate)
             .filterBounds(region)
+            .filterMetadata("WRS_PATH", "equals", WRS_PATH)
+            .filterMetadata("WRS_ROW", "equals", WRS_ROW)
+            .map(lambda image: image.clip(region))
             .select(landsatBands, bandNamesLandsat)
-            .map(
-                lambda image: image.setMulti(
-                    {
-                        "system:time_start": ee.Date(
-                            image.date().format("y-M-d")
-                        ).millis(),
-                        "DOY": image.date().format("D"),
-                    }
-                )
-            )
-            .select(commonBandNames)
-        )
-
-    else:
-        # get landsat images
-        landsat = (
-            ee.ImageCollection(landsatCollection)
-            .filterDate(startDate, endDate)
-            .filterBounds(region)
-            .filterMetadata("CLOUD_COVER", "less_than", 5)
-            .select(landsatBands, bandNamesLandsat)
-            .map(addNDVI)
-            .map(maskLandsat)
-            .filterMetadata("CloudSnowMaskedPercent", "less_than", 50)
             .map(
                 lambda image: image.setMulti(
                     {
@@ -321,11 +350,41 @@ def getPaired(
             .map(etmToOli)
         )
 
+    else:
+        # get landsat images
+        landsat = (
+            ee.ImageCollection(landsatCollection)
+            .filterDate(startDate, endDate)
+            .filterBounds(region)
+            .filterMetadata("WRS_PATH", "equals", WRS_PATH)
+            .filterMetadata("WRS_ROW", "equals", WRS_ROW)
+            .filterMetadata("CLOUD_COVER", "less_than", cloud_cover_limit)
+            .map(lambda image: image.clip(region))
+            .map(prep_c2sr_l4l5l7)
+            .select(landsatBands, bandNamesLandsat)
+            # .map(addNDVI)
+            # .filterMetadata("CloudSnowMaskedPercent", "less_than", 50)
+            .map(
+                lambda image: image.setMulti(
+                    {
+                        "system:time_start": ee.Date(
+                            image.date().format("y-M-d")
+                        ).millis(),
+                        "DOY": image.date().format("D"),
+                    }
+                )
+            )
+            .select(commonBandNames)
+            # .map(etmToOli)
+        )
+
     # get modis images
     modis = (
         ee.ImageCollection(modisCollection)
         .filterDate(startDate, endDate)
+        .map(lambda image: image.clip(region))
         .select(modisBands, bandNamesModis)
+        .map(scaleMODIS)
         # .map(addNDVI)
         .map(maskMODIS)
         .map(lambda image: image.set("DOY", image.date().format("D")))
