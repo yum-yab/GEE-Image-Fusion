@@ -46,7 +46,26 @@ import ee
 ##############################################################################
 # MASKING, INDEX CALCULATION, L5 & L7 TO L8 HARMONIZATION
 ##############################################################################
+
+# converstion from (E)TM (used in LANDSAT5 and 7) to OLI (used in LANDSAT8)
+# taken from Roy et al. 2016 https://doi.org/10.1016/j.rse.2015.12.024
+# format: {"band_name": [offset, factor]}
+# swir1 is for ~1.61 μm, swir2 for ~2.21 μm
+LANDSAT_ETM_CORRECTION = {
+    "blue": [0.0003, 0.8474],
+    "green": [0.0088, 0.8483],
+    "red": [0.0061, 0.9047],
+    "nir": [0.0412, 0.8462],
+    "swir1": [0.0254, 0.8937],
+    "swir2": [0.0172, 0.9071],
+}
+
+
+ee_landsat_etm_correction_coeffs = ee.Dictionary(LANDSAT_ETM_CORRECTION)
+
+
 # from https://github.com/google/earthengine-catalog/blob/64a5942e296ee5f803972564fef6abaa14986898/pipelines/landsat.py#L64
+
 
 def prep_c2sr_l4l5l7(image: ee.Image) -> ee.Image:
     """Scale and mask L5-L7 C2 SR."""
@@ -237,6 +256,26 @@ def etmToOli(img):
     )
 
 
+def l5l7_to_oli(image):
+
+    band_names = image.bandNames()
+
+    def correct_band(bandname):
+        ee_name = ee.String(bandname)
+
+        has_coeffs = ee_landsat_etm_correction_coeffs.contains(ee_name)
+
+        return ee.Algorithms.If(
+            has_coeffs,
+            image.select(ee_name)
+            .add(ee.List(ee_landsat_etm_correction_coeffs.get(ee_name)).get(0))
+            .multiply(ee.List(ee_landsat_etm_correction_coeffs.get(ee_name)).get(1)),
+            image,
+        )
+
+    return ee.ImageCollection.fromImages(band_names.map(correct_band)).toBands().rename(band_names)
+
+
 ##############################################################################
 # FILTER AND PAIR IMAGES
 ##############################################################################
@@ -255,7 +294,7 @@ def getPaired(
     region: ee.Geometry,
     WRS_PATH: int,
     WRS_ROW: int,
-    cloud_cover_limit: int = 20,    
+    cloud_cover_limit: int = 20,
     skip_masking: bool = False,
 ):
     """
