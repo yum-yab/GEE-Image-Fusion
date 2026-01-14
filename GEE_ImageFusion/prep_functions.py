@@ -40,7 +40,7 @@ SOFTWARE.
 import ee
 
 
-def registerImages(landsat_t01, modis_t01, modis_tp, clip_modis=None):
+def registerImages(landsat_t01, modis_t01, modis_tp):
     """
     Register each image to the earliest (t0) landsat image in the set of pairs.
 
@@ -63,16 +63,10 @@ def registerImages(landsat_t01, modis_t01, modis_tp, clip_modis=None):
         Resampled, registered version of input (registered to Landsat t0).
 
     """
-    # resample
+    
 
-    if clip_modis is not None:
-
-        def preprocessing_func(image):
-            return ee.Image(image).clip(clip_modis).resample("bicubic")
-    else:
-
-        def preprocessing_func(image):
-            return ee.Image(image).resample("bicubic")
+    def preprocessing_func(image):
+        return ee.Image(image).resample("bicubic")
 
     landsat_t01 = landsat_t01.map(lambda image: ee.Image(image).resample("bicubic"))
 
