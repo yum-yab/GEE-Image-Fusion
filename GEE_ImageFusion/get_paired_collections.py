@@ -45,6 +45,7 @@ import ee
 
 from typing import Dict, List, Optional
 
+import pandas as pd
 
 ##############################################################################
 # MASKING, INDEX CALCULATION, L5 & L7 TO L8 HARMONIZATION
@@ -299,7 +300,7 @@ def get_combined_landsat(
     common_bands: List,
     region: Optional[ee.Geometry] = None,
     cloud_cover_limit: int = 20,
-    include_l7: bool = True,
+    include_l7_slc: bool = False,
 ) -> ee.ImageCollection:
     """Retrieves and combines Landsat 5, 7, and 8/9 Surface Reflectance imagery.
 
@@ -322,13 +323,23 @@ def get_combined_landsat(
             to clip the images. Defaults to None.
         cloud_cover_limit (int, optional): The maximum cloud cover percentage
             allowed for images. Defaults to 20.
-        include_l7 (bool, optional): Whether to include Landsat 7 imagery in the
-            combined collection. Defaults to True.
+        include_l7_slc (bool, optional): Whether to include Landsat 7 imagery
+            after its SLC failure (2003-05-31). Defaults to False.
 
     Returns:
         ee.ImageCollection: An Earth Engine ImageCollection containing combined,
             preprocessed, and harmonized Landsat imagery.
     """
+
+    l7_slc_failure_date = "2003-05-31"
+    if include_l7_slc:
+        l7_end_date = end_date
+    else:
+        # If end_date is after SLC failure, cap L7 data at the failure date.
+        l7_end_date = min(end_date, l7_slc_failure_date)
+
+
+
     landsat57_source_bn = ee.List(list(landsat_band_mapping.keys()))
     landsat_target_bn = ee.List(list(landsat_band_mapping.values()))
 
@@ -408,11 +419,11 @@ def get_combined_landsat(
 
     sr = l5.merge(l8)
 
-    if include_l7:
+    if min(start_date, l7_end_date) != l7_end_date:
         l7 = (
             ee.ImageCollection("LANDSAT/LE07/C02/T1_L2")
             .filterDate("1984-01-01", "2017-01-01")  # Orbital drift after 2017.
-            .filterDate(start_date, end_date)
+            .filterDate(start_date, l7_end_date)
             .filter("WRS_ROW < 122")  # Remove night-time images.
             .filterMetadata("WRS_PATH", "equals", wrs_path)
             .filterMetadata("WRS_ROW", "equals", wrs_row)
