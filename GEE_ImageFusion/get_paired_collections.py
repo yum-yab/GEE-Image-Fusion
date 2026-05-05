@@ -515,7 +515,7 @@ def get_paired_collections(
         common_bands=common_bands,
         region=region,
         cloud_cover_limit=cloud_cover_limit,
-        include_l7=include_l7,
+        include_l7_slc=include_l7,
     ).map(
         # this is necessary to align with modis images, which are set on midnight (landsat are set some time during the day)
         lambda image: image.setMulti(

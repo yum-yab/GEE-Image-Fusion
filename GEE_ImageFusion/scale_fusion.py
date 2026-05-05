@@ -18,7 +18,7 @@ class LandsatFusionComputationConfig:
     def __init__(
         self,
         common_bands: List[str],
-        kernel_radius: int,
+        kernel_radius: int = 10,
         cover_classes: int = 7,
         register_images: bool = True,
         modis_interp_sample_rate: Optional[int] = None,
@@ -35,7 +35,7 @@ class LandsatFusionComputationConfig:
 
         self.register_images = register_images
 
-        self.common_bands = common_bands
+        self.common_bands = ee.List(common_bands)
         self.kernel_radius = kernel_radius
         self.modis_interp_sample_rate = modis_interp_sample_rate
         self.region_clip = region_clip
@@ -54,23 +54,41 @@ def handle_subcollection(
     subcollection: ee.List,
     fusion_comp_cfg: LandsatFusionComputationConfig,
 ) -> ee.List:
-    # radius of moving window
-
     landsat_borderpair = ee.List(ee.List(subcollection).get(0))
     modis_borderpair = ee.List(ee.List(subcollection).get(1))
     modis_interp_images = ee.List(ee.List(subcollection).get(2))
 
-    # at this point the collections should be reduced to the  common band names
-
-    common_bands = landsat_borderpair.get(0).bandNames()
-
-    if fusion_comp_cfg.sample_rate is not None:
+    if fusion_comp_cfg.modis_interp_sample_rate is not None:
         indices = ee.List.sequence(
             0,
             modis_interp_images.size().subtract(1),
             fusion_comp_cfg.modis_interp_sample_rate,
         )
         modis_interp_images = indices.map(lambda i: modis_interp_images.get(i))
+
+    return ee.Algorithms.If(
+        ee.Algorithms.IsEqual(ee.List(ee.List(subcollection).get(2)).size(), 0),
+        ee.List([landsat_borderpair.get(0)]),
+        handle_valid_subcollection(
+            landsat_borderpair=landsat_borderpair,
+            modis_borderpair=modis_borderpair,
+            modis_interp_images=modis_interp_images,
+            fusion_comp_cfg=fusion_comp_cfg,
+        ),
+    )
+
+
+def handle_valid_subcollection(
+    landsat_borderpair: ee.List,
+    modis_borderpair: ee.List,
+    modis_interp_images: ee.List,
+    fusion_comp_cfg: LandsatFusionComputationConfig,
+) -> ee.List:
+    # radius of moving window
+
+    # at this point the collections should be reduced to the  common band names
+
+    common_bands = fusion_comp_cfg.common_bands
 
     if fusion_comp_cfg.register_images:
         landsat_borderpair, modis_borderpair, modis_interp_images = registerImages(
@@ -130,8 +148,6 @@ def handle_subcollection(
     return prediction.insert(0, ee.Image(landsat_borderpair.get(0)))
 
 
-
-
 def compute_year_for_tile(
     wrs_path: int,
     wrs_row: int,
@@ -164,5 +180,6 @@ def compute_year_for_tile(
         )
     )
 
-
-    return ee.ImageCollection.fromImages(image_lists_list.flatten()).filterDate("{year}-01-01", "{year}-12-31")
+    return ee.ImageCollection.fromImages(image_lists_list.flatten()).filterDate(
+        f"{year}-01-01", f"{year}-12-31"
+    )

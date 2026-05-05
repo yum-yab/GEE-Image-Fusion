@@ -279,7 +279,7 @@ def prepMODIS(modis_t01, modis_tp, kernel, numPixels, commonBandNames, pixelBand
 
 
 def prepLandsat(
-    landsat_t01, kernel, numPixels, commonBandNames, doys, coverClasses, geometry
+    landsat_t01, kernel, numPixels, commonBandNames, doys, coverClasses
 ):
     """
     Convert Landsat images to neighborhood images, mask dissimilar pixels,\
